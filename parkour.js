@@ -56,9 +56,6 @@ const progressBarEl = document.getElementById('progressBar');
 const scoreTextEl = document.getElementById('scoreText');
 const winMessageEl = document.getElementById('winMessage');
 const loseMessageEl = document.getElementById('loseMessage');
-const livesContainerEl = document.getElementById('livesContainer');
-const livesBarEl = document.getElementById('livesBar');
-const livesTextEl = document.getElementById('livesText');
 const timerContainerEl = document.getElementById('timerContainer');
 const timeTextEl = document.getElementById('timeText');
 const timeBarEl = document.getElementById('timeBar');
@@ -74,12 +71,18 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// --- Sistema de Audio de Fondo ---
+const bgMusic = new Audio('subway_surfers.mp4');
+bgMusic.loop = true;
+bgMusic.volume = 0.3; // Volumen bajo para que no sature
+
 controls.addEventListener('lock', () => {
     if (startScreenEl) startScreenEl.style.display = 'none';
     if (infoEl) infoEl.style.display = 'none';
     if (hudEl) hudEl.style.display = 'block'; // Mostrar progreso al jugar
-    if (livesContainerEl) livesContainerEl.style.display = 'block'; // Mostrar barrita de vidas
     if (timerContainerEl) timerContainerEl.style.display = 'block'; // Mostrar temporizador
+    // Reproducir la música al confirmar la entrada en el juego (sin ser bloqueado por el navegador)
+    bgMusic.play().catch(e => console.log("Bloqueo del navegador: ", e));
 });
 
 controls.addEventListener('unlock', () => {
@@ -87,6 +90,8 @@ controls.addEventListener('unlock', () => {
     if (startScreenEl && startScreenEl.style.display === 'none') {
         if (infoEl) infoEl.style.display = 'block';
     }
+    // Pausar la música al poner menú de pausa
+    bgMusic.pause();
 });
 scene.add(controls.getObject());
 
@@ -100,8 +105,6 @@ let score = 0;
 let collectibles = [];
 const maxScore = 100;
 
-let lives = 100;
-const maxLives = 100;
 let highestY = 0; // Para rastrear desde dónde se cayó
 let hasWon = false;
 
@@ -165,19 +168,6 @@ function updateHUD() {
     }
 }
 
-function updateLivesHUD() {
-    if (!livesBarEl) return;
-    const progress = (lives / maxLives) * 100;
-    livesBarEl.style.width = progress + '%';
-    if (livesTextEl) livesTextEl.innerText = Math.floor(progress);
-
-    if (progress <= 20) {
-        livesBarEl.style.backgroundColor = '#ff0000'; // Rojo de peligro
-    } else {
-        livesBarEl.style.backgroundColor = '#ff3366'; // Rosado normal
-    }
-}
-
 function updateTimerHUD() {
     if (!timeTextEl || !timeBarEl) return;
 
@@ -203,8 +193,6 @@ function resetGame() {
     highestY = 0;
     timeLeft = maxTimeLeft;
     updateTimerHUD();
-    ammo = 0;
-    updateAmmoHUD();
     // Reiniciar puntos
     score = 0;
     collectibles.forEach(c => {
@@ -212,6 +200,9 @@ function resetGame() {
         c.mesh.visible = true;
     });
     spiralStairs.forEach(stair => {
+        stair.disappearTimer = 0;
+        stair.reappearTimer = 0;
+        stair.mesh.material.emissive.setHex(0x000000);
         if (!stair.active) {
             scene.add(stair.mesh);
             world.addBody(stair.body);
@@ -279,21 +270,31 @@ document.addEventListener('keyup', (e) => {
     if (code === 'KeyD' || code === 'ArrowRight') keys.d = false;
 });
 
-// Detectar si el jugador está tocando el piso
+// Detectar si el jugador está tocando el piso u otros objetos como las escaleras
+let bodiesSteppedOn = new Set();
+
 world.addEventListener('postStep', () => {
     // Asumimos que no puede saltar salvo que confirmemos que toca algo por debajo
     let contactFloor = false;
+    bodiesSteppedOn.clear(); // Limpiar colisiones del frame anterior
+
     for (let i = 0; i < world.contacts.length; i++) {
         const c = world.contacts[i];
         if (c.bi === playerBody || c.bj === playerBody) {
+
+            // Guardar la normal original para no alterar permanentemente la colisión física
+            let ny = c.ni.y;
+
             // Verificar si la normal de colisión apunta hacia arriba
             if (c.bi === playerBody) {
-                c.ni.negate(c.ni); // Asegurarse de que ni apunta DE a hacia b
+                ny = -ny; // Asegurarse de que ni apunta del jugador hacia el piso
             }
-            // Si la normal y apunta fuertemente hacia abajo relativo al body, estamos sobre el piso
-            if (c.ni.y < -0.5 || c.ni.y > 0.5) { // Cannon aveces invierte las normales dependiendo del orden bi bj
+
+            // Si la normal y apunta fuertemente hacia abajo relativo al body, estamos pisando ese cuerpo
+            if (ny < -0.5 || ny > 0.5) { // Cannon aveces invierte las normales dependiendo del orden bi bj
                 contactFloor = true;
-                break;
+                if (c.bi === playerBody) bodiesSteppedOn.add(c.bj);
+                if (c.bj === playerBody) bodiesSteppedOn.add(c.bi);
             }
         }
     }
@@ -331,11 +332,10 @@ floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
 scene.add(floor);
 
-// Suelo Físico (Plano infinito en CANNON)
-const floorShape = new CANNON.Plane();
+// Suelo Físico (Plano limitado en CANNON en lugar de infinito)
+const floorShape = new CANNON.Box(new CANNON.Vec3(40, 0.5, 40));
 const floorPhysObj = new CANNON.Body({ mass: 0, shape: floorShape, material: physMaterial });
-// Cannon los planos miran al Z positivo por defecto, en Three miramos hacia Y, lo rotamos
-floorPhysObj.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+floorPhysObj.position.set(0, -0.5, 0); // Lo bajamos medio metro para alinear el ras con Y=0
 world.addBody(floorPhysObj);
 
 const gridHelper = new THREE.GridHelper(80, 40, 0x000000, 0x000000);
@@ -525,7 +525,7 @@ for (let i = 0; i < numStairs; i++) {
     body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
     world.addBody(body);
 
-    spiralStairs.push({ mesh: mesh, body: body, active: true, initialY: y + height / 2 });
+    spiralStairs.push({ mesh: mesh, body: body, active: true, initialY: y + height / 2, disappearTimer: 0, reappearTimer: 0 });
 }
 
 // GRAN META AL FINAL DE LA ESPIRAL
@@ -590,6 +590,58 @@ function createTree(x, z, scale) {
 
 createTree(-15, -15, 1.5); createTree(18, -12, 1.0); createTree(-18, 15, 0.7);
 createTree(15, 18, 1.2); createTree(25, 5, 2.0); createTree(-25, 0, 0.8);
+
+// Árboles FRONDOSOS nuevos 
+const detailedTrunkMat = new THREE.MeshStandardMaterial({ color: 0x3d352b, roughness: 1.0 }); // Tronco más oscuro
+const detailedLeavesMat = new THREE.MeshStandardMaterial({ color: 0x6bb31c, roughness: 1.0, flatShading: true }); // Verde intenso y vivo como en la foto
+function createDetailedTree(x, z, scale) {
+    const group = new THREE.Group();
+
+    // Tronco y ramas principales
+    const trunkGeom = new THREE.CylinderGeometry(0.4 * scale, 0.7 * scale, 4 * scale, 7);
+    const trunk = new THREE.Mesh(trunkGeom, detailedTrunkMat);
+    trunk.position.y = 2 * scale; trunk.castShadow = true; trunk.receiveShadow = true; group.add(trunk);
+
+    // Clusters de hojas (múltiples esferas modificadas para hacer la copa ancha y frondosa)
+    const clusterPositions = [
+        [0, 4.2, 0, 2.8],      // Centro alto
+        [1.5, 3.8, 1.0, 2.0],  // Derecha frontal
+        [-1.5, 4.1, 0.8, 2.2], // Izquierda frontal
+        [1.0, 3.9, -1.5, 2.1], // Derecha trasera
+        [-1.2, 3.6, -1.6, 1.9],// Izquierda trasera
+        [0, 5.2, 0, 1.6],      // Copa tope
+        [2.2, 3.2, 0, 1.5],    // Extremo derecho bajo
+        [-2.2, 3.4, 0, 1.6]    // Extremo izquierdo bajo
+    ];
+
+    clusterPositions.forEach(pos => {
+        const geom = new THREE.DodecahedronGeometry(pos[3] * scale, 1); // 1 = subdivisión para que sea redondeado pero irregular
+        const mesh = new THREE.Mesh(geom, detailedLeavesMat);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        mesh.position.set(pos[0] * scale, pos[1] * scale, pos[2] * scale);
+        // Girar para que el flatShading le de variación extra a los tonos verdes de la luz
+        mesh.rotation.x = Math.random() * Math.PI;
+        mesh.rotation.y = Math.random() * Math.PI;
+        mesh.rotation.z = Math.random() * Math.PI;
+        group.add(mesh);
+    });
+
+    group.position.set(x, 0, z); group.rotation.y = Math.random() * Math.PI;
+    scene.add(group);
+
+    // FÍSICA: Tronco colisionable
+    const shape = new CANNON.Box(new CANNON.Vec3(0.5 * scale, 2.5 * scale, 0.5 * scale));
+    const body = new CANNON.Body({ mass: 0, shape: shape, material: physMaterial });
+    body.position.set(x, 2.5 * scale, z);
+    world.addBody(body);
+}
+
+// Colocar 5 de los nuevos árboles detallados por el mapa
+createDetailedTree(10, -22, 1.4);
+createDetailedTree(-35, -20, 1.7); // Movido más atrás para no bloquear la tabla morada y el banco
+createDetailedTree(28, 15, 1.5);
+createDetailedTree(-12, 28, 1.6);
+createDetailedTree(-30, 20, 1.8);
 
 function createBuildingWindowsTexture() {
     const canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 256; const ctx = canvas.getContext('2d');
@@ -706,8 +758,6 @@ function animate() {
                     c.collected = true;
                     c.mesh.visible = false;
                     score++;
-                    ammo = Math.min(ammo + 5, maxAmmo); // Recarga 5 per perla
-                    updateAmmoHUD();
                     updateHUD();
                 }
             }
@@ -720,24 +770,10 @@ function animate() {
 
         // Comprobar y manejar caídas (perder)
         if (playerBody.position.y < -5) {
-            // Si estaba en el bloque rosa o más arriba (Y real del jugador > 6.0 comprobando la altura) resta 5%
-            if (highestY >= 6.0) {
-                lives -= 5;
-                updateLivesHUD();
-            }
-
-            if (lives <= 0) {
-                // Perdió todas las vidas, se resetea TODO
-                lives = maxLives;
-                updateLivesHUD();
-                resetGame();
-                showLoseMessage();
-            } else {
-                // Pierde vida pero solo vuelve al principio (mantiene los puntos)
-                playerBody.position.set(0, 5, 20);
-                playerBody.velocity.set(0, 0, 0);
-                highestY = 0; // Reiniciar rastreo al volver abajo
-            }
+            // Perdió por caída, se resetea TODO
+            resetGame();
+            showLoseMessage();
+            highestY = 0; // Reiniciar rastreo al volver abajo
         }
 
         // Verificar victoria puramente por llegar al escenario superior de meta
@@ -749,20 +785,38 @@ function animate() {
         // --- Lógica de escaleras en Espiral que desaparecen ---
         for (let i = 0; i < spiralStairs.length; i++) {
             const stair = spiralStairs[i];
-            // Si el jugador salta y sobrepasa por 2.5 metros por encima la escalera, esta desaparece
-            if (stair.active && playerBody.position.y > stair.initialY + 2.5) {
-                scene.remove(stair.mesh);
-                world.removeBody(stair.body);
-                stair.active = false;
 
-                // Reaparecer la escalera después de 3 segundos
-                setTimeout(() => {
-                    if (!stair.active && !hasWon) { // Asegurarse de que sigan activas si no se ha reiniciado ya
-                        scene.add(stair.mesh);
-                        world.addBody(stair.body);
-                        stair.active = true;
+            if (stair.active) {
+                // Si el jugador realmente colisiona FÍSICAMENTE con el rigidbody de la escalera, empieza la cuenta regresiva
+                if (stair.disappearTimer === 0 && bodiesSteppedOn.has(stair.body)) {
+                    stair.disappearTimer = 3.0;
+                }
+
+                if (stair.disappearTimer > 0) {
+                    stair.disappearTimer -= timeStep;
+                    // Parpadeo visual para avisar al jugador de la inestabilidad
+                    stair.mesh.material.emissive.setHex(Math.floor(stair.disappearTimer * 10) % 2 === 0 ? 0x555555 : 0x000000);
+
+                    if (stair.disappearTimer <= 0) {
+                        scene.remove(stair.mesh);
+                        world.removeBody(stair.body);
+                        stair.active = false;
+                        stair.disappearTimer = 0;
+                        stair.reappearTimer = 3.0; // 3 segundos para reaparecer
                     }
-                }, 3000);
+                }
+            } else {
+                if (stair.reappearTimer > 0) {
+                    stair.reappearTimer -= timeStep;
+                    if (stair.reappearTimer <= 0) {
+                        if (!hasWon) {
+                            scene.add(stair.mesh);
+                            world.addBody(stair.body);
+                            stair.active = true;
+                            stair.mesh.material.emissive.setHex(0x000000); // Resetear brillo
+                        }
+                    }
+                }
             }
         }
     } else {
@@ -803,8 +857,6 @@ function animate() {
             updateTimerHUD();
             if (timeLeft <= 0) {
                 // Perdió por tiempo
-                lives = maxLives;
-                updateLivesHUD();
                 resetGame();
                 showLoseMessage();
             }
