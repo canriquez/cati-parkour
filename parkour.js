@@ -76,6 +76,9 @@ const bgMusic = new Audio('subway_surfers.mp4');
 bgMusic.loop = true;
 bgMusic.volume = 0.3; // Volumen bajo para que no sature
 
+const coinSound = new Audio('single-cling.MP3');
+coinSound.volume = 0.6; // Más fuerte para que se escuche bien por encima de la música
+
 controls.addEventListener('lock', () => {
     if (startScreenEl) startScreenEl.style.display = 'none';
     if (infoEl) infoEl.style.display = 'none';
@@ -90,8 +93,9 @@ controls.addEventListener('unlock', () => {
     if (startScreenEl && startScreenEl.style.display === 'none') {
         if (infoEl) infoEl.style.display = 'block';
     }
-    // Pausar la música al poner menú de pausa
+    // Pausar toda la música al poner menú de pausa
     bgMusic.pause();
+    coinSound.pause(); // Parar el de las monedas
 });
 scene.add(controls.getObject());
 
@@ -160,6 +164,7 @@ function updateHUD() {
         winMessageEl.style.display = 'block';
         if (!hasWon) {
             hasWon = true;
+            bgMusic.pause(); // Parar la música de fondo al ganar
             triggerCelebration();
         }
     } else {
@@ -758,6 +763,11 @@ function animate() {
                     c.collected = true;
                     c.mesh.visible = false;
                     score++;
+
+                    // Reproducir sonido de moneda
+                    coinSound.currentTime = 0;
+                    coinSound.play().catch(e => console.log("Error de audio:", e));
+
                     updateHUD();
                 }
             }
