@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plaza Parkour 3D</title>
+    <!-- Three.js y dependencias -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+    <!-- Cannon.js para Físicas -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #87CEEB;
+            /* Cielo */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            width: 100%;
+            text-align: center;
+            color: #fff;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        #startScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-image: url('bg.png');
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+
+        #startScreen h1 {
+            color: #ffffff;
+            font-size: 80px;
+            margin: 0;
+            font-family: Impact, sans-serif;
+            text-shadow: 0px 4px 6px #000;
+            letter-spacing: 5px;
+        }
+
+        #startButton {
+            margin-top: 40px;
+            padding: 15px 50px;
+            font-size: 28px;
+            background-color: #33cc33;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-weight: bold;
+            box-shadow: 0 6px #1a881a;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        #startButton:active {
+            box-shadow: 0 0 #1a881a;
+            transform: translateY(6px);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="startScreen">
+        <h1>PARKOUR</h1>
+        <button id="startButton">EMPEZAR</button>
+    </div>
+
+    <div id="info" style="display: none;">Plaza de Parkour en el Barrio<br><span id="instructions"
+            style="font-size: 14px; font-weight: normal; cursor: pointer;">El juego está pausado.<br>Haz clic aquí para
+            Reanudar<br>(W, A, S, D para Moverte | ESPACIO para Saltar)</span></div>
+
+    <div id="timerContainer"
+        style="position: absolute; top: 20px; left: 50%; transform: translateX(-50%); display: none; width: 400px; text-align: center;">
+        <div
+            style="color: white; font-weight: bold; margin-bottom: 5px; text-shadow: 2px 2px 4px #000; font-size: 24px;">
+            ⏱️ Tiempo restante: <span id="timeText">03:00</span>
+        </div>
+        <div style="background-color: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px; border: 2px solid #33ccff;">
+            <div id="timeBar"
+                style="width: 100%; height: 20px; background-color: #33ccff; transition: width 0.3s; border-radius: 3px;">
+            </div>
+        </div>
+    </div>
+
+    <div id="hud" style="position: absolute; top: 20px; left: 20px; display: none; width: 300px;">
+        <div style="background-color: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px; border: 2px solid #fff;">
+            <div id="progressBar"
+                style="width: 0%; height: 20px; background-color: #ffcc00; transition: width 0.3s; border-radius: 3px;">
+            </div>
+        </div>
+        <div
+            style="text-align: center; color: white; font-weight: bold; margin-top: 5px; text-shadow: 1px 1px 2px #000;">
+            Puntos: <span id="scoreText">0</span> / 100
+        </div>
+    </div>
+
+    <div id="livesContainer" style="position: absolute; bottom: 20px; left: 20px; display: none; width: 300px;">
+        <div
+            style="text-align: left; color: white; font-weight: bold; margin-bottom: 5px; text-shadow: 1px 1px 2px #000; font-size: 20px;">
+            ❤️ Vidas: <span id="livesText">100</span>%
+        </div>
+        <div style="background-color: rgba(0,0,0,0.5); padding: 5px; border-radius: 5px; border: 2px solid #ff3366;">
+            <div id="livesBar"
+                style="width: 100%; height: 20px; background-color: #ff3366; transition: width 0.3s; border-radius: 3px;">
+            </div>
+        </div>
+    </div>
+
+    <div id="winMessage"
+        style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #33ff66; font-size: 80px; display: none; text-align: center; font-weight: bold; text-shadow: 4px 4px 10px #000; pointer-events: none; z-index: 10;">
+        ¡HAS GANADO!<br><span style="font-size: 40px; color: #fff;">You win!</span>
+    </div>
+    <div id="loseMessage"
+        style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #ff3333; font-size: 80px; display: none; text-align: center; font-weight: bold; text-shadow: 4px 4px 10px #000; pointer-events: none; z-index: 10;">
+        ¡HAS PERDIDO!<br><span style="font-size: 40px; color: #fff;">Vuelve a intentarlo</span>
+    </div>
+    <script src="parkour.js"></script>
+</body>
+
+</html>
