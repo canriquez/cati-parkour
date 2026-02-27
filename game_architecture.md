@@ -3,7 +3,7 @@
 This document describes the internal structure, algorithms, and design patterns used to create the 3D parkour game running directly in a web browser using Three.js and Cannon.js.
 
 ## Overview
-The game is a pure vanilla JavaScript application embedded into a single `.js` file (`parkour.js`) accompanied by an `index.html` file that serves as the wrapper and User Interface (UI).
+The game is a pure vanilla JavaScript application embedded into a single `.js` file (`parkour.js`) accompanied by an `index.html` file that serves as the wrapper and User Interface (UI)..
 
 It utilizes:
 *   **Three.js (r128):** For rendering the 3D scene, cameras, lighting, object meshes, and textures.
