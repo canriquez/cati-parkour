@@ -59,7 +59,41 @@ const loseMessageEl = document.getElementById('loseMessage');
 const timerContainerEl = document.getElementById('timerContainer');
 const timeTextEl = document.getElementById('timeText');
 const timeBarEl = document.getElementById('timeBar');
+const healthBarEl = document.getElementById('healthBar');
+const healthTextEl = document.getElementById('healthText');
+const damageOverlayEl = document.getElementById('damageOverlay');
 const startScreenEl = document.getElementById('startScreen');
+
+let playerHealth = 100;
+
+function updateHealthHUD() {
+    if (!healthBarEl || !healthTextEl) return;
+    healthBarEl.style.width = playerHealth + '%';
+    healthTextEl.innerText = playerHealth;
+}
+
+function takeDamage(amount) {
+    if (playerHealth <= 0) return; // Ya está muerto y reseteándose
+    playerHealth -= amount;
+
+    // Destello de borde rojo de daño
+    if (damageOverlayEl) {
+        damageOverlayEl.style.transition = 'none';
+        damageOverlayEl.style.opacity = 1;
+        // Forzar al navegador a recalcular para que la opacidad 1 se aplique inmediatamente
+        void damageOverlayEl.offsetWidth;
+        damageOverlayEl.style.transition = 'opacity 1s ease-out';
+        damageOverlayEl.style.opacity = 0;
+    }
+
+    if (playerHealth <= 0) {
+        playerHealth = 0;
+        updateHealthHUD();
+        showLoseMessage();
+    } else {
+        updateHealthHUD();
+    }
+}
 const startButtonEl = document.getElementById('startButton');
 
 document.addEventListener('click', (e) => {
@@ -81,6 +115,13 @@ coinSound.volume = 0.6; // Más fuerte para que se escuche bien por encima de la
 
 controls.addEventListener('lock', () => {
     if (startScreenEl) startScreenEl.style.display = 'none';
+    if (loseMessageEl) loseMessageEl.style.display = 'none';
+
+    // Crear el modelo físico del jugador según lo que se seleccionó en el HTML
+    if (typeof selectedGender !== 'undefined') {
+        buildPlayerModel(selectedGender);
+    }
+
     if (infoEl) infoEl.style.display = 'none';
     if (hudEl) hudEl.style.display = 'block'; // Mostrar progreso al jugar
     if (timerContainerEl) timerContainerEl.style.display = 'block'; // Mostrar temporizador
@@ -89,11 +130,15 @@ controls.addEventListener('lock', () => {
 });
 
 controls.addEventListener('unlock', () => {
+    // Si perdimos y estamos en la pantalla blanca, NO mostrar menú de pausa
+    if (loseMessageEl && loseMessageEl.style.display === 'flex') {
+        if (infoEl) infoEl.style.display = 'none';
+    }
     // Mostrar cartel de pausa si la pantalla inicial no está
-    if (startScreenEl && startScreenEl.style.display === 'none') {
+    else if (startScreenEl && startScreenEl.style.display === 'none') {
         if (infoEl) infoEl.style.display = 'block';
     }
-    // Pausar toda la música al poner menú de pausa
+    // Pausar toda la música al poner menú de pausa o Game Over
     bgMusic.pause();
     coinSound.pause(); // Parar el de las monedas
 });
@@ -197,7 +242,9 @@ function resetGame() {
     playerBody.velocity.set(0, 0, 0);
     highestY = 0;
     timeLeft = maxTimeLeft;
+    playerHealth = 100;
     updateTimerHUD();
+    updateHealthHUD();
     // Reiniciar puntos
     score = 0;
     collectibles.forEach(c => {
@@ -220,10 +267,18 @@ function resetGame() {
 
 function showLoseMessage() {
     if (!loseMessageEl) return;
-    loseMessageEl.style.display = 'block';
-    setTimeout(() => {
+    controls.unlock(); // Forzar salir del juego para ver el cursor
+    loseMessageEl.style.display = 'flex'; // Usado flex para la pantalla blanca completa
+}
+
+// Botón de Volver a Empezar
+const restartBtnEl = document.getElementById('restartBtn');
+if (restartBtnEl) {
+    restartBtnEl.addEventListener('click', () => {
         loseMessageEl.style.display = 'none';
-    }, 4000); // Se oculta a los 4 segundos
+        resetGame();
+        controls.lock(); // Entrar al juego automáticamente tras resetear
+    });
 }
 
 function createCollectible(x, y, z) {
@@ -253,6 +308,180 @@ playerBody.fixedRotation = true;   // No queremos que ruede como una pelota
 playerBody.updateMassProperties();
 world.addBody(playerBody);
 
+// --- SISTEMA DEL PERSONAJE (MODELO VISUAL 3D) ---
+let playerMeshGroup = new THREE.Group();
+scene.add(playerMeshGroup);
+
+function buildPlayerModel(gender) {
+    // Limpiar si ya tenía algo dentro (por si entra y sale de pausa)
+    while (playerMeshGroup.children.length > 0) {
+        playerMeshGroup.remove(playerMeshGroup.children[0]);
+    }
+
+    // Si ya existe un nombre flotante en la escena anterior, lo eliminamos para no duplicar
+    if (typeof window.nameSprite !== 'undefined') {
+        scene.remove(window.nameSprite);
+    }
+
+    // Materiales comunes
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xffccaa, roughness: 0.6 });
+
+    // Cabeza (es común)
+    const headGeom = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+    const head = new THREE.Mesh(headGeom, skinMat);
+    head.position.y = 1.4;
+    head.castShadow = true;
+    playerMeshGroup.add(head);
+
+    // Nombre de usuario flotante (si existe la variable global desde el index.html)
+    if (typeof globalUsername !== 'undefined') {
+        const nameCanvas = document.createElement('canvas');
+        nameCanvas.width = 512;
+        nameCanvas.height = 128;
+        const ctx = nameCanvas.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 50px Arial';
+        ctx.textAlign = 'center';
+        // Borde negro simular sombra de letras
+        ctx.shadowColor = "rgba(0,0,0,0.8)";
+        ctx.shadowBlur = 5;
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 2;
+        ctx.fillText(globalUsername, 256, 80);
+
+        const nameTex = new THREE.CanvasTexture(nameCanvas);
+        const nameMat = new THREE.SpriteMaterial({ map: nameTex, color: 0xffffff });
+        window.nameSprite = new THREE.Sprite(nameMat); // Guardarlo global para animarlo después
+        // Posicionar 3 metros arriba de la cabeza para que se lea desde lejos
+        window.nameSprite.position.set(0, 3.0, 0);
+        // Escalarlo para que no sea inmenso
+        window.nameSprite.scale.set(3, 3 * 0.25, 1);
+        scene.add(window.nameSprite); // <-- Añadido a scene en vez de playerMeshGroup para que no herede rotación
+    }
+
+    if (gender === 'girl') {
+        // MUJER (Según la imagen)
+        const hairMat = new THREE.MeshStandardMaterial({ color: 0x5c3a21, roughness: 0.9 }); // Castaño oscuro
+
+        // Pelo - Flequillo arriba
+        const hairTopGeom = new THREE.BoxGeometry(0.9, 0.2, 0.9);
+        const hairTop = new THREE.Mesh(hairTopGeom, hairMat);
+        hairTop.position.set(0, 1.85, 0);
+        playerMeshGroup.add(hairTop);
+        // Pelo - Lacio atrás (largo en la espalda)
+        const hairBackGeom = new THREE.BoxGeometry(0.85, 1.2, 0.3);
+        const hairBack = new THREE.Mesh(hairBackGeom, hairMat);
+        hairBack.position.set(0, 1.1, 0.4); // Positivo en Z para que vaya a la espalda
+        playerMeshGroup.add(hairBack);
+
+        // Vestido salmón/coral
+        const dressMat = new THREE.MeshStandardMaterial({ color: 0xe36953, roughness: 0.8 });
+        const torsoGeom = new THREE.CylinderGeometry(0.4, 0.7, 1.0, 4); // Forma de pirámide plana
+        const torso = new THREE.Mesh(torsoGeom, dressMat);
+        torso.position.y = 0.5;
+        torso.rotation.y = Math.PI / 4; // Para alinear las puntas del cuadrado base
+        torso.castShadow = true;
+        playerMeshGroup.add(torso);
+
+        // Brazos (con mangas del mismo color que el vestido)
+        const armGeom = new THREE.BoxGeometry(0.2, 0.9, 0.2);
+        const armL = new THREE.Mesh(armGeom, dressMat);
+        // Manos asomando
+        const handGeom = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+        const handL = new THREE.Mesh(handGeom, skinMat);
+        handL.position.y = -0.55; armL.add(handL);
+        // Posicionarlos pegados a los hombros (parte angosta del vestido) y abrirlos hacia afuera
+        armL.position.set(-0.48, 0.6, 0); armL.rotation.z = -0.2; playerMeshGroup.add(armL);
+
+        const armR = new THREE.Mesh(armGeom, dressMat);
+        const handR = new THREE.Mesh(handGeom, skinMat);
+        handR.position.y = -0.55; armR.add(handR);
+        armR.position.set(0.48, 0.6, 0); armR.rotation.z = 0.2; playerMeshGroup.add(armR);
+
+        // Piernas (piel descubierta por la pollera)
+        const legGeom = new THREE.BoxGeometry(0.25, 0.8, 0.25);
+        const legL = new THREE.Mesh(legGeom, skinMat);
+        legL.position.set(-0.25, -0.4, 0); legL.castShadow = true; playerMeshGroup.add(legL);
+        const legR = new THREE.Mesh(legGeom, skinMat);
+        legR.position.set(0.25, -0.4, 0); legR.castShadow = true; playerMeshGroup.add(legR);
+
+    } else {
+        // VARÓN (Según la imagen)
+        const hairMat = new THREE.MeshStandardMaterial({ color: 0xba8c5a, roughness: 0.9 }); // Castaño claro / Caramelo
+
+        // Pelo - Base
+        const hairBaseGeom = new THREE.BoxGeometry(0.85, 0.3, 0.9);
+        const hairBase = new THREE.Mesh(hairBaseGeom, hairMat);
+        hairBase.position.set(0, 1.85, 0);
+        playerMeshGroup.add(hairBase);
+
+        // Pelo - Flequillo levantado
+        const hairTopGeom = new THREE.BoxGeometry(0.7, 0.3, 0.5);
+        const hairTop = new THREE.Mesh(hairTopGeom, hairMat);
+        hairTop.position.set(0, 2.05, -0.2); // Negativo en Z para ir a la frente
+        hairTop.rotation.x = 0.1; // Girar hacia adelante
+        playerMeshGroup.add(hairTop);
+
+        // Torso principal (Remera blanca)
+        const shirtMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+        const torsoGeom = new THREE.BoxGeometry(0.7, 1.0, 0.35);
+        const torso = new THREE.Mesh(torsoGeom, shirtMat);
+        torso.position.y = 0.5;
+        torso.castShadow = true;
+        playerMeshGroup.add(torso);
+
+        // Chaqueta Beige (cubriendo espalda y laterales)
+        const jacketMat = new THREE.MeshStandardMaterial({ color: 0xc89b68, roughness: 0.8 });
+        const jacketGeom = new THREE.BoxGeometry(0.75, 1.0, 0.4);
+        const jacket = new THREE.Mesh(jacketGeom, jacketMat);
+        jacket.position.set(0, 0.5, 0.05); // Positivo en Z para que vaya atrás de la espalda y no cubra el pecho
+        jacket.castShadow = true;
+        playerMeshGroup.add(jacket);
+
+        // Brazos (Mangas de la chaqueta)
+        const armGeom = new THREE.BoxGeometry(0.25, 0.9, 0.25);
+        const armL = new THREE.Mesh(armGeom, jacketMat);
+        // Manos asomando
+        const handGeom = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+        const handL = new THREE.Mesh(handGeom, skinMat);
+        handL.position.y = -0.55; armL.add(handL);
+        armL.position.set(-0.55, 0.5, 0); armL.rotation.z = 0.1; playerMeshGroup.add(armL);
+
+        const armR = new THREE.Mesh(armGeom, jacketMat);
+        const handR = new THREE.Mesh(handGeom, skinMat);
+        handR.position.y = -0.55; armR.add(handR);
+        armR.position.set(0.55, 0.5, 0); armR.rotation.z = -0.1; playerMeshGroup.add(armR);
+
+        // Piernas (Jeans azules con doblez en tobillos)
+        const pantsMat = new THREE.MeshStandardMaterial({ color: 0x4f87ae, roughness: 0.9 });
+        const cuffMat = new THREE.MeshStandardMaterial({ color: 0x76a7ca, roughness: 0.9 }); // Color más claro para el doblez
+        const legGeom = new THREE.BoxGeometry(0.3, 0.7, 0.3);
+        const cuffGeom = new THREE.BoxGeometry(0.32, 0.15, 0.32);
+
+        // Zapatillas (Marrones con punta blanca)
+        const shoeMat = new THREE.MeshStandardMaterial({ color: 0x8a6e4d, roughness: 0.8 });
+        const shoeTipMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+        const shoeGeom = new THREE.BoxGeometry(0.28, 0.15, 0.35);
+        const shoeTipGeom = new THREE.BoxGeometry(0.28, 0.15, 0.15);
+
+        // Construir Pierna Izquierda
+        const legL = new THREE.Mesh(legGeom, pantsMat);
+        legL.position.set(-0.2, -0.35, 0); legL.castShadow = true;
+        const cuffL = new THREE.Mesh(cuffGeom, cuffMat); cuffL.position.y = -0.35; legL.add(cuffL);
+        const shoeL = new THREE.Mesh(shoeGeom, shoeMat); shoeL.position.set(0, -0.45, -0.05); legL.add(shoeL);
+        const shoeTipL = new THREE.Mesh(shoeTipGeom, shoeTipMat); shoeTipL.position.set(0, 0, -0.18); shoeL.add(shoeTipL);
+        playerMeshGroup.add(legL);
+
+        // Construir Pierna Derecha
+        const legR = new THREE.Mesh(legGeom, pantsMat);
+        legR.position.set(0.2, -0.35, 0); legR.castShadow = true;
+        const cuffR = new THREE.Mesh(cuffGeom, cuffMat); cuffR.position.y = -0.35; legR.add(cuffR);
+        const shoeR = new THREE.Mesh(shoeGeom, shoeMat); shoeR.position.set(0, -0.45, -0.05); legR.add(shoeR);
+        const shoeTipR = new THREE.Mesh(shoeTipGeom, shoeTipMat); shoeTipR.position.set(0, 0, -0.18); shoeR.add(shoeTipR);
+        playerMeshGroup.add(legR);
+    }
+}
+
 const keys = { w: false, a: false, s: false, d: false };
 let canJump = false;
 
@@ -275,12 +504,25 @@ document.addEventListener('keyup', (e) => {
     if (code === 'KeyD' || code === 'ArrowRight') keys.d = false;
 });
 
-// Detectar si el jugador está tocando el piso u otros objetos como las escaleras
+// Selector de vista (Primera / Tercera Persona)
+let isThirdPerson = false;
+document.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyB') {
+        isThirdPerson = !isThirdPerson;
+    }
+});
+
+// Detectar caídas y tipo de piso
 let bodiesSteppedOn = new Set();
+let lastSafePlatformType = 'floor'; // Guardar el último objeto sobre el que estuvimos apoyados seguros
+let wasOnFloor = true; // Empieza sobre el piso sin contar como "impacto" de caída
 
 world.addEventListener('postStep', () => {
-    // Asumimos que no puede saltar salvo que confirmemos que toca algo por debajo
-    let contactFloor = false;
+    let contactFloor = false; // "contactFloor" essentially means we can jump
+    let touchingFloorObj = false;
+    let touchingStairObj = false;
+    let touchingBlockObj = false;
+
     bodiesSteppedOn.clear(); // Limpiar colisiones del frame anterior
 
     for (let i = 0; i < world.contacts.length; i++) {
@@ -298,11 +540,35 @@ world.addEventListener('postStep', () => {
             // Si la normal y apunta fuertemente hacia abajo relativo al body, estamos pisando ese cuerpo
             if (ny < -0.5 || ny > 0.5) { // Cannon aveces invierte las normales dependiendo del orden bi bj
                 contactFloor = true;
-                if (c.bi === playerBody) bodiesSteppedOn.add(c.bj);
-                if (c.bj === playerBody) bodiesSteppedOn.add(c.bi);
+                const otherBody = c.bi === playerBody ? c.bj : c.bi;
+                bodiesSteppedOn.add(otherBody);
+
+                if (otherBody.isFloor) touchingFloorObj = true;
+                else if (otherBody.isStair) touchingStairObj = true;
+                else if (otherBody.isBlock) touchingBlockObj = true;
             }
         }
     }
+
+    // Lógica para quitar vida al chocar desde lejos contra el suelo inferior
+    if (touchingFloorObj) {
+        if (!wasOnFloor) {
+            // Recién golpeamos el piso después de estar en el aire
+            if (lastSafePlatformType === 'stair') {
+                takeDamage(100); // Muerte súbita
+            } else if (lastSafePlatformType === 'block') {
+                takeDamage(10);  // Castigo de -10% de vida
+            }
+        }
+        lastSafePlatformType = 'floor';
+        wasOnFloor = true;
+    } else if (touchingStairObj || touchingBlockObj) {
+        lastSafePlatformType = touchingStairObj ? 'stair' : 'block';
+        wasOnFloor = false;
+    } else {
+        wasOnFloor = false; // El jugador está saltando o cayendo en el aire
+    }
+
     canJump = contactFloor;
 });
 
@@ -340,6 +606,7 @@ scene.add(floor);
 // Suelo Físico (Plano limitado en CANNON en lugar de infinito)
 const floorShape = new CANNON.Box(new CANNON.Vec3(40, 0.5, 40));
 const floorPhysObj = new CANNON.Body({ mass: 0, shape: floorShape, material: physMaterial });
+floorPhysObj.isFloor = true; // MARCA DEL SISTEMA DE CAÍDA
 floorPhysObj.position.set(0, -0.5, 0); // Lo bajamos medio metro para alinear el ras con Y=0
 world.addBody(floorPhysObj);
 
@@ -408,6 +675,7 @@ function createBench(x, z, rotationY, baseY = 0) {
     // FÍSICA: Una caja perimetral simple
     const shape = new CANNON.Box(new CANNON.Vec3(2, 0.7, 0.6)); // Dimensiones mitad: ancho/2, alto/2, prof/2
     const body = new CANNON.Body({ mass: 0, shape: shape, material: physMaterial });
+    body.isBlock = true; // MARCA DEL SISTEMA DE CAÍDA
     body.position.set(x, baseY + 0.7, z); // Elevamos al centro aprox
     body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), rotationY);
     world.addBody(body);
@@ -460,6 +728,7 @@ function createPlatform(x, z, width, height, depth, baseY = 0, color = 0xcc4422)
     // FÍSICA: Plataforma
     const shape = new CANNON.Box(new CANNON.Vec3(width / 2, height / 2, depth / 2));
     const body = new CANNON.Body({ mass: 0, shape: shape, material: physMaterial });
+    body.isBlock = true; // MARCA DEL SISTEMA DE CAÍDA
     body.position.set(x, baseY + height / 2, z);
     world.addBody(body);
 }
@@ -526,6 +795,7 @@ for (let i = 0; i < numStairs; i++) {
     // FÍSICA rotada
     const shape = new CANNON.Box(new CANNON.Vec3(width / 2, height / 2, depth / 2));
     const body = new CANNON.Body({ mass: 0, shape: shape, material: physMaterial });
+    body.isStair = true; // MARCA DE PELIGRO MORTAL AL CAER AL SUELO
     body.position.set(x, y + height / 2, z);
     body.quaternion.setFromAxisAngle(new CANNON.Vec3(0, 1, 0), angle);
     world.addBody(body);
@@ -873,9 +1143,60 @@ function animate() {
         }
     }
 
-    // SIEMPRE anclamos la cámara TRES a la cabeza del cuerpo FÌSICO (así no queda el fondo gris la primera vez)
-    // radius = 1, sumamos algo extra para que esté a la altura de los ojos
-    camera.position.set(playerBody.position.x, playerBody.position.y + playerRadius * 0.4, playerBody.position.z);
+    // --- ANIMAR Y POSICIONAR AL MODELO VISUAL (3ra Persona) ---
+    playerMeshGroup.visible = isThirdPerson; // Oculto en 1ra para que no tape los ojos
+
+    // Colocar el modelo visual apoyado en el piso (borde abajo del cuerpo físico + ajuste de altura de piernas)
+    const visualOffset = (typeof selectedGender !== 'undefined' && selectedGender === 'girl') ? 0.8 : 0.87;
+    playerMeshGroup.position.x = playerBody.position.x;
+    playerMeshGroup.position.y = playerBody.position.y - playerRadius + visualOffset;
+    playerMeshGroup.position.z = playerBody.position.z;
+
+    // Calcular suavemente a qué lado del espacio estamos mirando para aplicar la rotación
+    const currentDir = new THREE.Vector3();
+    controls.getDirection(currentDir);
+    playerMeshGroup.rotation.y = Math.atan2(-currentDir.x, -currentDir.z);
+
+    // Posicionar el nombre flotante
+    if (typeof window.nameSprite !== 'undefined') {
+        window.nameSprite.visible = isThirdPerson;
+        window.nameSprite.position.x = playerBody.position.x;
+        window.nameSprite.position.y = playerBody.position.y + 2.5;
+        window.nameSprite.position.z = playerBody.position.z;
+    }
+
+    // ACTUALIZAR CÁMARA (Primera o Tercera persona)
+    if (isThirdPerson) {
+        // --- 3ra PERSONA ---
+        // Obtener hacia donde mira actualmente el jugador y poner la cámara atrás y arriba
+        const dir = new THREE.Vector3();
+        controls.getDirection(dir);
+        dir.y = 0; dir.normalize();
+
+        // Distancia detrás (Z/X) y altura (Y) de la cámara estilo GTA/Mario
+        const offsetDistance = 6.0;
+        const heightOffset = 3.0;
+
+        const idealPosition = new THREE.Vector3(
+            playerBody.position.x - dir.x * offsetDistance,
+            playerBody.position.y + heightOffset,
+            playerBody.position.z - dir.z * offsetDistance
+        );
+
+        // Interpolar (lerp) para que la cámara siga suavemente al personaje sin dar tirones
+        camera.position.lerp(idealPosition, 0.15);
+        camera.lookAt(playerBody.position.x, playerBody.position.y + playerRadius, playerBody.position.z);
+    } else {
+        // --- 1ra PERSONA (Clásica) ---
+        // Siempre anclamos la cámara a la cabeza del cuerpo FÌSICO
+        // radius = 1, sumamos algo extra para que esté a la altura de los ojos
+        camera.position.set(playerBody.position.x, playerBody.position.y + playerRadius * 0.4, playerBody.position.z);
+
+        // Para asegurar que la rotación se reestablezca correctamente al volver de 3ra a 1ra
+        const dir = new THREE.Vector3();
+        controls.getDirection(dir);
+        camera.lookAt(camera.position.x + dir.x, camera.position.y + dir.y, camera.position.z + dir.z);
+    }
 
     // Animar el movimiento lento de las nubes en el cielo
     clouds.forEach(c => {
